@@ -30,7 +30,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
-const { setupDatabase } = require('./db/setup');
+
 // Handle preflight requests for all routes
 app.options('*', cors());
 
@@ -43,6 +43,9 @@ const { testConnection } = require('./config/database');
 testConnection().then(() => {
   console.log('✅ PostgreSQL Database ready');
 });
+
+// Import setupDatabase ONCE at the top
+const { setupDatabase } = require('./db/setup');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -81,6 +84,8 @@ app.get('/health', async (req, res) => {
     });
   }
 });
+
+// Manual database setup endpoint
 app.get('/api/setup-db', async (req, res) => {
   try {
     console.log('🔄 Manually triggering database setup...');
@@ -104,7 +109,7 @@ app.get('/api/setup-db', async (req, res) => {
   }
 });
 
-// Also add a simple test endpoint
+// Test tables endpoint
 app.get('/api/test-tables', async (req, res) => {
   try {
     const { pool } = require('./config/database');
@@ -128,6 +133,7 @@ app.get('/api/test-tables', async (req, res) => {
     });
   }
 });
+
 // Root route
 app.get('/', (req, res) => {
   res.json({
@@ -146,14 +152,13 @@ app.get('/', (req, res) => {
   });
 });
 
-// Setup endpoint (for initial deployment)
+// Secure setup endpoint (requires SETUP_KEY)
 app.post('/api/setup', async (req, res) => {
   if (process.env.NODE_ENV === 'production' && req.headers['x-setup-key'] !== process.env.SETUP_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
   try {
-    const { setupDatabase } = require('./db/setup');
     await setupDatabase();
     res.json({ success: true, message: 'Database setup completed' });
   } catch (error) {
@@ -162,7 +167,6 @@ app.post('/api/setup', async (req, res) => {
 });
 
 // Auto-setup middleware (runs once on first request)
-const { setupDatabase } = require('./db/setup');
 let dbSetupComplete = false;
 app.use(async (req, res, next) => {
   if (!dbSetupComplete && req.method === 'GET' && req.path === '/health') {
