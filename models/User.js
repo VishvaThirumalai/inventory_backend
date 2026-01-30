@@ -1,92 +1,91 @@
+// models/User.js
 const { pool } = require('../config/database');
 const bcrypt = require('bcryptjs');
 
 class User {
-  // Create new user
   static async create(userData) {
     const { name, email, password, role = 'staff', phone } = userData;
     
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
-    const [result] = await pool.query(
+    const result = await pool.query(
       `INSERT INTO users (name, email, password, role, phone) 
-       VALUES (?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email, role, phone, status, created_at`,
       [name, email, hashedPassword, role, phone]
     );
     
-    return this.findById(result.insertId);
+    return result.rows[0];
   }
 
-  // Find user by ID
   static async findById(id) {
-    const [rows] = await pool.query(
-      'SELECT id, name, email, role, phone, status, created_at FROM users WHERE id = ?',
+    const result = await pool.query(
+      'SELECT id, name, email, role, phone, status, created_at FROM users WHERE id = $1',
       [id]
     );
-    return rows[0];
+    return result.rows[0];
   }
 
-  // Find user by email
   static async findByEmail(email) {
-    const [rows] = await pool.query(
-      'SELECT * FROM users WHERE email = ?',
+    const result = await pool.query(
+      'SELECT * FROM users WHERE email = $1',
       [email]
     );
-    return rows[0];
+    return result.rows[0];
   }
 
-  // Check password
   static async checkPassword(password, hashedPassword) {
     return await bcrypt.compare(password, hashedPassword);
   }
 
-  // Update user
   static async update(id, userData) {
     const fields = [];
     const values = [];
+    let paramCount = 1;
     
     for (const [key, value] of Object.entries(userData)) {
       if (value !== undefined) {
-        fields.push(`${key} = ?`);
+        fields.push(`${key} = $${paramCount}`);
         values.push(value);
+        paramCount++;
       }
+    }
+    
+    if (fields.length === 0) {
+      return this.findById(id);
     }
     
     values.push(id);
     
     await pool.query(
-      `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${paramCount}`,
       values
     );
     
     return this.findById(id);
   }
 
-  // FORGOT PASSWORD: Set reset token
   static async setResetToken(email, token) {
     const expires = new Date();
-    expires.setHours(expires.getHours() + 1); // 1 hour expiry
+    expires.setHours(expires.getHours() + 1);
     
     await pool.query(
-      'UPDATE users SET reset_password_token = ?, reset_password_expires = ? WHERE email = ?',
+      'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
       [token, expires, email]
     );
   }
 
-  // FORGOT PASSWORD: Find by reset token
   static async findByResetToken(token) {
-    const [rows] = await pool.query(
-      'SELECT * FROM users WHERE reset_password_token = ? AND reset_password_expires > NOW()',
+    const result = await pool.query(
+      'SELECT * FROM users WHERE reset_password_token = $1 AND reset_password_expires > NOW()',
       [token]
     );
-    return rows[0];
+    return result.rows[0];
   }
 
-  // FORGOT PASSWORD: Clear reset token
   static async clearResetToken(id) {
     await pool.query(
-      'UPDATE users SET reset_password_token = NULL, reset_password_expires = NULL WHERE id = ?',
+      'UPDATE users SET reset_password_token = NULL, reset_password_expires = NULL WHERE id = $1',
       [id]
     );
   }

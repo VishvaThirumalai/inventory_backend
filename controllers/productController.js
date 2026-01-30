@@ -1,7 +1,7 @@
+// controllers/productController.js
 const Product = require('../models/Product');
 const { validationResult } = require('express-validator');
 
-// Get all products with pagination
 // Get all products with pagination
 exports.getAll = async (req, res) => {
   try {
@@ -21,8 +21,8 @@ exports.getAll = async (req, res) => {
     });
     
     const result = await Product.getAll({ 
-      page, 
-      limit, 
+      page: parseInt(page), 
+      limit: parseInt(limit), 
       search, 
       status,
       category_id,

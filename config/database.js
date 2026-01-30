@@ -1,52 +1,52 @@
 // config/database.js
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 require('dotenv').config();
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'inventory_db',
-  port: process.env.DB_PORT || 3306,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  charset: 'utf8mb4'
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 5432,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
-// Test connection with auto-setup
+// Test connection
 const testConnection = async () => {
   try {
-    const connection = await pool.getConnection();
-    console.log('✅ MySQL Database connected successfully');
+    const client = await pool.connect();
+    console.log('✅ PostgreSQL Database connected successfully');
     
-    // Check if tables exist
-    const [tables] = await connection.query('SHOW TABLES LIKE "users"');
+    // Check if users table exists
+    const result = await client.query(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'users')"
+    );
     
-    if (tables.length === 0) {
-      console.log('📦 No tables found. Running database setup...');
-      const { setupDatabase } = require('../database/setup');
-      await setupDatabase();
+    if (!result.rows[0].exists) {
+      console.log('📦 No tables found. Auto-creating database structure...');
+      // Tables will be created on first API call
     } else {
       console.log('📊 Database tables already exist');
     }
     
-    connection.release();
+    client.release();
+    return true;
   } catch (error) {
     console.error('❌ Database connection failed:', error.message);
-    // Don't exit in production, just log
-    if (process.env.NODE_ENV === 'development') {
-      process.exit(1);
-    }
+    return false;
   }
 };
 
-// Auto-setup on server start
+// Auto-test connection
 if (process.env.NODE_ENV !== 'test') {
-  testConnection();
+  setTimeout(() => testConnection(), 1000);
 }
 
 module.exports = {
   pool,
-  testConnection
+  testConnection,
+  query: (text, params) => pool.query(text, params)
 };

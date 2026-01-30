@@ -1,3 +1,4 @@
+// controllers/saleController.js
 const Sale = require('../models/Sale');
 const Product = require('../models/Product');
 const { validationResult } = require('express-validator');
@@ -286,13 +287,13 @@ exports.completeSale = async (req, res) => {
   }
 };
 
-// @desc    Get sales statistics
+// @desc    Get sales statistics - NEEDS UPDATE
 // @route   GET /api/sales/stats
 exports.getSalesStats = async (req, res) => {
   try {
     const { period = 'today' } = req.query;
     
-    // Get sales stats
+    // Get sales stats - Update Sale model for PostgreSQL
     const summary = await Sale.getSalesStats(period);
     
     // Get daily sales for chart
@@ -378,34 +379,34 @@ exports.refundSale = async (req, res) => {
   }
 };
 
-// @desc    Get today's sales summary
+// @desc    Get today's sales summary - NEEDS UPDATE
 // @route   GET /api/sales/today
 exports.getTodaySales = async (req, res) => {
   try {
     const { pool } = require('../config/database');
     
-    const [todayStats] = await pool.query(`
+    const todayStats = await pool.query(`
       SELECT 
         COALESCE(COUNT(*), 0) as count,
         COALESCE(SUM(final_amount), 0) as revenue,
         COALESCE(AVG(final_amount), 0) as average_sale
       FROM sales 
-      WHERE DATE(created_at) = CURDATE() 
+      WHERE DATE(created_at) = CURRENT_DATE 
       AND status = 'completed'
     `);
     
-    const [pendingSales] = await pool.query(`
+    const pendingSales = await pool.query(`
       SELECT COUNT(*) as count
       FROM sales 
-      WHERE DATE(created_at) = CURDATE() 
+      WHERE DATE(created_at) = CURRENT_DATE 
       AND status = 'pending'
     `);
     
-    const [recentSales] = await pool.query(`
+    const recentSales = await pool.query(`
       SELECT s.*, u.name as sold_by_name
       FROM sales s
       LEFT JOIN users u ON s.sold_by = u.id
-      WHERE DATE(s.created_at) = CURDATE()
+      WHERE DATE(s.created_at) = CURRENT_DATE
       ORDER BY s.created_at DESC
       LIMIT 10
     `);
@@ -413,9 +414,9 @@ exports.getTodaySales = async (req, res) => {
     res.json({
       success: true,
       data: {
-        summary: todayStats[0],
-        pending: pendingSales[0],
-        recent: recentSales
+        summary: todayStats.rows[0],
+        pending: pendingSales.rows[0],
+        recent: recentSales.rows
       }
     });
     

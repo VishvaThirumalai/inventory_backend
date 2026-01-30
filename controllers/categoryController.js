@@ -1,3 +1,4 @@
+// controllers/categoryController.js
 const Category = require('../models/Category');
 const { validationResult } = require('express-validator');
 
@@ -58,12 +59,31 @@ exports.getById = async (req, res) => {
 // Create new category
 exports.create = async (req, res) => {
   try {
+    console.log('📥 [Category Controller] CREATE - Received request body:', {
+      body: req.body,
+      name: req.body.name,
+      nameRaw: req.body.name,
+      nameIncludesAmpersand: req.body.name?.includes('&'),
+      nameIncludesAmpEntity: req.body.name?.includes('&amp;'),
+      headers: req.headers,
+      contentType: req.headers['content-type']
+    });
+    
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
     const category = await Category.create(req.body);
+    
+    console.log('📤 [Category Controller] CREATE - Returning category:', {
+      id: category.id,
+      name: category.name,
+      nameFromResponse: category.name,
+      nameIncludesAmpersand: category.name?.includes('&'),
+      nameIncludesAmpEntity: category.name?.includes('&amp;')
+    });
+    
     res.status(201).json({ success: true, data: category });
   } catch (error) {
     console.error('❌ [Categories] Error in create:', error);
@@ -74,6 +94,15 @@ exports.create = async (req, res) => {
 // Update category
 exports.update = async (req, res) => {
   try {
+    console.log('📥 [Category Controller] UPDATE - Received request body:', {
+      body: req.body,
+      name: req.body.name,
+      nameRaw: req.body.name,
+      nameIncludesAmpersand: req.body.name?.includes('&'),
+      nameIncludesAmpEntity: req.body.name?.includes('&amp;'),
+      id: req.params.id
+    });
+    
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ success: false, errors: errors.array() });
@@ -83,6 +112,14 @@ exports.update = async (req, res) => {
     if (!category) {
       return res.status(404).json({ success: false, message: 'Category not found' });
     }
+    
+    console.log('📤 [Category Controller] UPDATE - Returning category:', {
+      id: category.id,
+      name: category.name,
+      nameFromResponse: category.name,
+      nameIncludesAmpersand: category.name?.includes('&'),
+      nameIncludesAmpEntity: category.name?.includes('&amp;')
+    });
     
     res.json({ success: true, data: category });
   } catch (error) {
@@ -114,10 +151,12 @@ exports.delete = async (req, res) => {
   }
 };
 
-// Get category statistics
+// Get category statistics - NEEDS UPDATE FOR POSTGRESQL
 exports.getStats = async (req, res) => {
   try {
-    const [stats] = await pool.query(`
+    const { pool } = require('../config/database');
+    
+    const result = await pool.query(`
       SELECT 
         COUNT(DISTINCT c.id) as total_categories,
         COUNT(DISTINCT p.id) as total_products,
@@ -128,7 +167,7 @@ exports.getStats = async (req, res) => {
       WHERE p.status != 'discontinued' OR p.status IS NULL
     `);
     
-    res.json({ success: true, data: stats[0] });
+    res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('❌ [Categories] Error in getStats:', error);
     res.status(500).json({ success: false, message: error.message });

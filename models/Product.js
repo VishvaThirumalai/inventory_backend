@@ -1,11 +1,12 @@
+// models/Product.js
 const { pool } = require('../config/database');
 
 class Product {
   static async getAll({ page = 1, limit = 10, search = '', status = '', category_id = '', supplier_id = '' } = {}) {
-  console.log('Product.getAll called with:', { page, limit, search, status, category_id, supplier_id });
-  
-  const offset = (page - 1) * limit;
-    // Build the base query with CASE statement
+    console.log('Product.getAll called with:', { page, limit, search, status, category_id, supplier_id });
+    
+    const offset = (page - 1) * limit;
+    
     let query = `
       SELECT 
         p.*, 
@@ -23,91 +24,101 @@ class Product {
     `;
     
     const params = [];
+    let paramCount = 1;
     
     // Handle search
     if (search) {
-      query += ' AND (p.name LIKE ? OR p.sku LIKE ? OR p.description LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      query += ` AND (p.name ILIKE $${paramCount} OR p.sku ILIKE $${paramCount} OR p.description ILIKE $${paramCount})`;
+      params.push(`%${search}%`);
+      paramCount++;
     }
     
-    // Handle status filter - FIXED CASE STATEMENT
+    // Handle status filter
     if (status && status !== 'all') {
       if (status === 'out_of_stock' || status === 'low_stock' || status === 'in_stock') {
-        // For stock-based status, use stock_status
-        query += ' AND CASE WHEN p.current_stock = 0 THEN ? WHEN p.current_stock <= p.min_stock_level THEN ? ELSE ? END = ?';
-        params.push('out_of_stock', 'low_stock', 'in_stock', status);
-      } else {
-        // For product status (active, discontinued)
-        query += ' AND p.status = ?';
+        query += ` AND CASE WHEN p.current_stock = 0 THEN 'out_of_stock' WHEN p.current_stock <= p.min_stock_level THEN 'low_stock' ELSE 'in_stock' END = $${paramCount}`;
         params.push(status);
+        paramCount++;
+      } else {
+        query += ` AND p.status = $${paramCount}`;
+        params.push(status);
+        paramCount++;
       }
     }
     
     // Handle category filter
     if (category_id) {
-      query += ' AND p.category_id = ?';
+      query += ` AND p.category_id = $${paramCount}`;
       params.push(category_id);
+      paramCount++;
     }
     
     // Handle supplier filter
     if (supplier_id) {
-      query += ' AND p.supplier_id = ?';
+      query += ` AND p.supplier_id = $${paramCount}`;
       params.push(supplier_id);
+      paramCount++;
     }
     
     // Add ordering and pagination
-    query += ' ORDER BY p.created_at DESC LIMIT ? OFFSET ?';
+    query += ` ORDER BY p.created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
     params.push(parseInt(limit), parseInt(offset));
     
     // Execute query
-    const [rows] = await pool.query(query, params);
+    const result = await pool.query(query, params);
     
-    // Get total count with same filters - FIXED
+    // Get total count with same filters
     let countQuery = `
       SELECT COUNT(*) as total 
       FROM products p
       WHERE 1=1
     `;
     const countParams = [];
+    let countParamCount = 1;
     
     if (search) {
-      countQuery += ' AND (p.name LIKE ? OR p.sku LIKE ? OR p.description LIKE ?)';
-      countParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      countQuery += ` AND (p.name ILIKE $${countParamCount} OR p.sku ILIKE $${countParamCount} OR p.description ILIKE $${countParamCount})`;
+      countParams.push(`%${search}%`);
+      countParamCount++;
     }
     
     if (status && status !== 'all') {
       if (status === 'out_of_stock' || status === 'low_stock' || status === 'in_stock') {
-        countQuery += ' AND CASE WHEN p.current_stock = 0 THEN ? WHEN p.current_stock <= p.min_stock_level THEN ? ELSE ? END = ?';
-        countParams.push('out_of_stock', 'low_stock', 'in_stock', status);
-      } else {
-        countQuery += ' AND p.status = ?';
+        countQuery += ` AND CASE WHEN p.current_stock = 0 THEN 'out_of_stock' WHEN p.current_stock <= p.min_stock_level THEN 'low_stock' ELSE 'in_stock' END = $${countParamCount}`;
         countParams.push(status);
+        countParamCount++;
+      } else {
+        countQuery += ` AND p.status = $${countParamCount}`;
+        countParams.push(status);
+        countParamCount++;
       }
     }
     
     if (category_id) {
-      countQuery += ' AND p.category_id = ?';
+      countQuery += ` AND p.category_id = $${countParamCount}`;
       countParams.push(category_id);
+      countParamCount++;
     }
     
     if (supplier_id) {
-      countQuery += ' AND p.supplier_id = ?';
+      countQuery += ` AND p.supplier_id = $${countParamCount}`;
       countParams.push(supplier_id);
+      countParamCount++;
     }
     
-    const [countResult] = await pool.query(countQuery, countParams);
+    const countResult = await pool.query(countQuery, countParams);
     
     return {
-      products: rows,
-      total: countResult[0].total,
+      products: result.rows,
+      total: parseInt(countResult.rows[0].total),
       page: parseInt(page),
       limit: parseInt(limit),
-      totalPages: Math.ceil(countResult[0].total / limit)
+      totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
     };
   }
 
   static async findById(id) {
-    const [rows] = await pool.query(
+    const result = await pool.query(
       `SELECT 
         p.*, 
         c.name as category_name, 
@@ -117,23 +128,23 @@ class Product {
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.id
        LEFT JOIN suppliers s ON p.supplier_id = s.id
-       WHERE p.id = ?`,
+       WHERE p.id = $1`,
       [id]
     );
-    return rows[0];
+    return result.rows[0];
   }
 
   static async findBySku(sku, excludeId = null) {
-    let query = 'SELECT * FROM products WHERE sku = ?';
+    let query = 'SELECT * FROM products WHERE sku = $1';
     const params = [sku];
     
     if (excludeId) {
-      query += ' AND id != ?';
+      query += ' AND id != $2';
       params.push(excludeId);
     }
     
-    const [rows] = await pool.query(query, params);
-    return rows[0];
+    const result = await pool.query(query, params);
+    return result.rows[0];
   }
 
   static async create(data) {
@@ -145,12 +156,12 @@ class Product {
       status = 'out_of_stock';
     }
     
-    const [result] = await pool.query(
+    const result = await pool.query(
       `INSERT INTO products (
         name, sku, description, category_id, supplier_id, 
         cost_price, selling_price, current_stock, min_stock_level, 
         max_stock_level, unit, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [
         data.name, 
         data.sku, 
@@ -167,15 +178,17 @@ class Product {
       ]
     );
     
+    const newProduct = result.rows[0];
+    
     // Create stock movement record if initial stock > 0
     if (currentStock > 0) {
       await pool.query(
         `INSERT INTO stock_movements (
           product_id, movement_type, quantity, reference_type,
           notes, created_by, previous_stock, new_stock
-        ) VALUES (?, 'in', ?, 'adjustment', ?, 1, 0, ?)`,
+        ) VALUES ($1, 'in', $2, 'adjustment', $3, 1, 0, $4)`,
         [
-          result.insertId,
+          newProduct.id,
           currentStock,
           'Initial stock',
           currentStock
@@ -183,7 +196,7 @@ class Product {
       );
     }
     
-    return this.findById(result.insertId);
+    return newProduct;
   }
 
   static async update(id, data) {
@@ -206,6 +219,7 @@ class Product {
     
     const fields = [];
     const values = [];
+    let paramCount = 1;
     
     const allowedFields = [
       'name', 'sku', 'description', 'category_id', 'supplier_id',
@@ -216,7 +230,7 @@ class Product {
     // Build update query
     for (const field of allowedFields) {
       if (data[field] !== undefined) {
-        fields.push(`${field} = ?`);
+        fields.push(`${field} = $${paramCount}`);
         
         if (field === 'cost_price' || field === 'selling_price') {
           values.push(parseFloat(data[field]) || 0);
@@ -227,13 +241,15 @@ class Product {
         } else {
           values.push(data[field]);
         }
+        paramCount++;
       }
     }
     
     // Always update status if stock changed
     if (data.current_stock !== undefined && !data.status) {
-      fields.push('status = ?');
+      fields.push('status = $' + paramCount);
       values.push(newStatus);
+      paramCount++;
     }
     
     if (fields.length === 0) {
@@ -243,7 +259,7 @@ class Product {
     values.push(id);
     
     await pool.query(
-      `UPDATE products SET ${fields.join(', ')} WHERE id = ?`,
+      `UPDATE products SET ${fields.join(', ')} WHERE id = $${paramCount}`,
       values
     );
     
@@ -257,7 +273,7 @@ class Product {
           `INSERT INTO stock_movements (
             product_id, movement_type, quantity, reference_type,
             notes, created_by, previous_stock, new_stock
-          ) VALUES (?, ?, ?, 'adjustment', ?, 1, ?, ?)`,
+          ) VALUES ($1, $2, $3, 'adjustment', $4, 1, $5, $6)`,
           [
             id,
             difference > 0 ? 'in' : 'out',
@@ -276,7 +292,7 @@ class Product {
   static async delete(id) {
     // Don't actually delete, just mark as discontinued
     await pool.query(
-      `UPDATE products SET status = 'discontinued' WHERE id = ?`,
+      `UPDATE products SET status = 'discontinued' WHERE id = $1`,
       [id]
     );
     return true;
@@ -300,7 +316,7 @@ class Product {
     }
     
     await pool.query(
-      `UPDATE products SET current_stock = ?, status = ? WHERE id = ?`,
+      `UPDATE products SET current_stock = $1, status = $2 WHERE id = $3`,
       [newStock, newStatus, productId]
     );
     
@@ -309,7 +325,7 @@ class Product {
       `INSERT INTO stock_movements (
         product_id, movement_type, quantity, reference_type,
         notes, created_by, previous_stock, new_stock
-      ) VALUES (?, ?, ?, 'adjustment', ?, 1, ?, ?)`,
+      ) VALUES ($1, $2, $3, 'adjustment', $4, 1, $5, $6)`,
       [
         productId,
         parseInt(quantity) > 0 ? 'in' : 'out',
@@ -324,7 +340,7 @@ class Product {
   }
 
   static async getLowStock() {
-    const [rows] = await pool.query(
+    const result = await pool.query(
       `SELECT p.*, c.name as category_name, s.name as supplier_name
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.id
@@ -333,35 +349,35 @@ class Product {
        AND p.status = 'active'
        ORDER BY (p.current_stock / NULLIF(p.min_stock_level, 0)) ASC`
     );
-    return rows;
+    return result.rows;
   }
 
   // Get products by category with pagination
   static async getByCategory(categoryId, { page = 1, limit = 10 } = {}) {
     const offset = (page - 1) * limit;
     
-    const [rows] = await pool.query(
+    const result = await pool.query(
       `SELECT p.*, s.name as supplier_name
        FROM products p
        LEFT JOIN suppliers s ON p.supplier_id = s.id
-       WHERE p.category_id = ? AND p.status != 'discontinued'
+       WHERE p.category_id = $1 AND p.status != 'discontinued'
        ORDER BY p.name
-       LIMIT ? OFFSET ?`,
+       LIMIT $2 OFFSET $3`,
       [categoryId, parseInt(limit), parseInt(offset)]
     );
     
-    const [countResult] = await pool.query(
+    const countResult = await pool.query(
       `SELECT COUNT(*) as total FROM products 
-       WHERE category_id = ? AND status != 'discontinued'`,
+       WHERE category_id = $1 AND status != 'discontinued'`,
       [categoryId]
     );
     
     return {
-      products: rows,
-      total: countResult[0].total,
+      products: result.rows,
+      total: parseInt(countResult.rows[0].total),
       page: parseInt(page),
       limit: parseInt(limit),
-      totalPages: Math.ceil(countResult[0].total / limit)
+      totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
     };
   }
 
@@ -369,28 +385,28 @@ class Product {
   static async getBySupplier(supplierId, { page = 1, limit = 10 } = {}) {
     const offset = (page - 1) * limit;
     
-    const [rows] = await pool.query(
+    const result = await pool.query(
       `SELECT p.*, c.name as category_name
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.id
-       WHERE p.supplier_id = ? AND p.status != 'discontinued'
+       WHERE p.supplier_id = $1 AND p.status != 'discontinued'
        ORDER BY p.name
-       LIMIT ? OFFSET ?`,
+       LIMIT $2 OFFSET $3`,
       [supplierId, parseInt(limit), parseInt(offset)]
     );
     
-    const [countResult] = await pool.query(
+    const countResult = await pool.query(
       `SELECT COUNT(*) as total FROM products 
-       WHERE supplier_id = ? AND status != 'discontinued'`,
+       WHERE supplier_id = $1 AND status != 'discontinued'`,
       [supplierId]
     );
     
     return {
-      products: rows,
-      total: countResult[0].total,
+      products: result.rows,
+      total: parseInt(countResult.rows[0].total),
       page: parseInt(page),
       limit: parseInt(limit),
-      totalPages: Math.ceil(countResult[0].total / limit)
+      totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
     };
   }
 }

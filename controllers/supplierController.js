@@ -1,3 +1,4 @@
+// controllers/supplierController.js
 const Supplier = require('../models/Supplier');
 const { validationResult } = require('express-validator');
 
@@ -29,8 +30,6 @@ exports.getAll = async (req, res) => {
     });
   }
 };
-
-// Keep other methods the same for now...
 
 // Get supplier by ID
 exports.getById = async (req, res) => {
@@ -74,7 +73,6 @@ exports.update = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 // Delete supplier
 exports.delete = async (req, res) => {

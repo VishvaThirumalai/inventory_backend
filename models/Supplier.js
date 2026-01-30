@@ -1,21 +1,22 @@
+// models/Supplier.js
 const { pool } = require('../config/database');
 
 class Supplier {
   static async getAll() {
-    const [rows] = await pool.query('SELECT * FROM suppliers ORDER BY name');
-    return rows;
+    const result = await pool.query('SELECT * FROM suppliers ORDER BY name');
+    return result.rows;
   }
 
   static async findById(id) {
-    const [rows] = await pool.query('SELECT * FROM suppliers WHERE id = ?', [id]);
-    return rows[0];
+    const result = await pool.query('SELECT * FROM suppliers WHERE id = $1', [id]);
+    return result.rows[0];
   }
 
   static async create(data) {
-    const [result] = await pool.query(
+    const result = await pool.query(
       `INSERT INTO suppliers 
        (name, email, phone, address, contact_person, status) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [
         data.name, 
         data.email || null, 
@@ -25,18 +26,20 @@ class Supplier {
         data.status || 'active'
       ]
     );
-    return this.findById(result.insertId);
+    return result.rows[0];
   }
 
   static async update(id, data) {
     const allowedFields = ['name', 'email', 'phone', 'address', 'contact_person', 'status', 'rating', 'total_orders', 'on_time_delivery_rate'];
     const fields = [];
     const values = [];
+    let paramCount = 1;
     
     for (const [key, value] of Object.entries(data)) {
       if (value !== undefined && allowedFields.includes(key)) {
-        fields.push(`${key} = ?`);
+        fields.push(`${key} = $${paramCount}`);
         values.push(value);
+        paramCount++;
       }
     }
     
@@ -47,7 +50,7 @@ class Supplier {
     values.push(id);
     
     await pool.query(
-      `UPDATE suppliers SET ${fields.join(', ')} WHERE id = ?`,
+      `UPDATE suppliers SET ${fields.join(', ')} WHERE id = $${paramCount}`,
       values
     );
     
@@ -55,18 +58,18 @@ class Supplier {
   }
 
   static async delete(id) {
-    const [result] = await pool.query('DELETE FROM suppliers WHERE id = ?', [id]);
-    return result.affectedRows > 0;
+    const result = await pool.query('DELETE FROM suppliers WHERE id = $1', [id]);
+    return result.rowCount > 0;
   }
 
   // Get suppliers with product counts and categories
   static async getAllWithStats() {
-    const [rows] = await pool.query(`
+    const result = await pool.query(`
       SELECT 
         s.*,
         COALESCE(p.product_count, 0) as product_count,
         COALESCE(p.total_stock_value, 0) as total_stock_value,
-        GROUP_CONCAT(DISTINCT c.name) as categories
+        STRING_AGG(DISTINCT c.name, ', ') as categories
       FROM suppliers s
       LEFT JOIN (
         SELECT 
@@ -82,34 +85,34 @@ class Supplier {
       GROUP BY s.id
       ORDER BY s.name
     `);
-    return rows;
+    return result.rows;
   }
 
   // Get categories supplied by this supplier
   static async getSupplierCategories(supplierId) {
-    const [rows] = await pool.query(`
+    const result = await pool.query(`
       SELECT DISTINCT c.*
       FROM categories c
       INNER JOIN products p ON c.id = p.category_id
-      WHERE p.supplier_id = ? AND p.status != 'discontinued'
+      WHERE p.supplier_id = $1 AND p.status != 'discontinued'
       ORDER BY c.name
     `, [supplierId]);
-    return rows;
+    return result.rows;
   }
 
   // Get performance metrics
   static async getPerformanceMetrics(supplierId) {
-    const [rows] = await pool.query(`
+    const result = await pool.query(`
       SELECT 
         COUNT(DISTINCT po.id) as total_orders,
         COUNT(CASE WHEN po.status = 'received' THEN 1 END) as completed_orders,
         AVG(po.total_amount) as avg_order_value,
         MAX(po.order_date) as last_order_date
       FROM purchase_orders po
-      WHERE po.supplier_id = ?
+      WHERE po.supplier_id = $1
     `, [supplierId]);
     
-    return rows[0] || {
+    return result.rows[0] || {
       total_orders: 0,
       completed_orders: 0,
       avg_order_value: 0,

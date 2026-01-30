@@ -1,3 +1,4 @@
+// controllers/authController.js
 const User = require('../models/User');
 const { createAuthResponse } = require('../utils/auth');
 const { validationResult } = require('express-validator');
@@ -112,7 +113,7 @@ const getMe = async (req, res) => {
   }
 };
 
-// 4. UPDATE PASSWORD (When logged in)
+// 4. UPDATE PASSWORD
 const updatePassword = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -162,7 +163,7 @@ const updatePassword = async (req, res) => {
   }
 };
 
-// 5. FORGOT PASSWORD (Generate reset token)
+// 5. FORGOT PASSWORD
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -182,9 +183,6 @@ const forgotPassword = async (req, res) => {
     // Save token to database
     await User.setResetToken(email, resetToken);
     
-    // In development, return token directly
-    // In production, you would send email here
-    
     res.json({
       success: true,
       message: 'Password reset instructions sent.',
@@ -201,7 +199,7 @@ const forgotPassword = async (req, res) => {
   }
 };
 
-// 6. RESET PASSWORD (With token)
+// 6. RESET PASSWORD
 const resetPassword = async (req, res) => {
   try {
     const { token } = req.params;

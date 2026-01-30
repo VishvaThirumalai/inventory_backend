@@ -14,69 +14,69 @@ class Sale {
     const params = [];
     
     if (startDate) {
-      query += ' AND DATE(s.created_at) >= ?';
+      query += ' AND DATE(s.created_at) >= $' + (params.length + 1);
       params.push(startDate);
     }
     
     if (endDate) {
-      query += ' AND DATE(s.created_at) <= ?';
+      query += ' AND DATE(s.created_at) <= $' + (params.length + 1);
       params.push(endDate);
     }
     
     if (status && status !== 'all') {
-      query += ' AND s.status = ?';
+      query += ' AND s.status = $' + (params.length + 1);
       params.push(status);
     }
     
     if (payment_method && payment_method !== 'all') {
-      query += ' AND s.payment_method = ?';
+      query += ' AND s.payment_method = $' + (params.length + 1);
       params.push(payment_method);
     }
     
-    query += ' ORDER BY s.created_at DESC LIMIT ? OFFSET ?';
+    query += ' ORDER BY s.created_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
     params.push(parseInt(limit), parseInt(offset));
     
-    const [rows] = await pool.query(query, params);
+    const { rows } = await pool.query(query, params);
     
     // Get total count
     let countQuery = 'SELECT COUNT(*) as total FROM sales WHERE 1=1';
     const countParams = [];
     
     if (startDate) {
-      countQuery += ' AND DATE(created_at) >= ?';
+      countQuery += ' AND DATE(created_at) >= $' + (countParams.length + 1);
       countParams.push(startDate);
     }
     
     if (endDate) {
-      countQuery += ' AND DATE(created_at) <= ?';
+      countQuery += ' AND DATE(created_at) <= $' + (countParams.length + 1);
       countParams.push(endDate);
     }
     
     if (status && status !== 'all') {
-      countQuery += ' AND status = ?';
+      countQuery += ' AND status = $' + (countParams.length + 1);
       countParams.push(status);
     }
     
-    const [countResult] = await pool.query(countQuery, countParams);
+    const { rows: countResult } = await pool.query(countQuery, countParams);
     
     // Calculate REAL summary statistics
-    const [stats] = await pool.query(`
+    const { rows: stats } = await pool.query(`
       SELECT 
         COUNT(*) as total_sales,
         COALESCE(SUM(final_amount), 0) as total_revenue,
         COALESCE(AVG(final_amount), 0) as average_sale,
-        COALESCE(SUM(CASE WHEN DATE(created_at) = CURDATE() AND status = 'completed' THEN final_amount ELSE 0 END), 0) as today_revenue,
-        COALESCE(SUM(CASE WHEN DATE(created_at) = CURDATE() AND status = 'completed' THEN 1 ELSE 0 END), 0) as today_sales
+        COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE AND status = 'completed' THEN final_amount ELSE 0 END), 0) as today_revenue,
+        COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE AND status = 'completed' THEN 1 ELSE 0 END), 0) as today_sales
       FROM sales 
       WHERE status = 'completed'
     `);
     
     return {
       sales: rows,
-      total: countResult[0].total,
+      total: parseInt(countResult[0].total),
       page: parseInt(page),
       limit: parseInt(limit),
-      totalPages: Math.ceil(countResult[0].total / limit),
+      totalPages: Math.ceil(parseInt(countResult[0].total) / limit),
       summary: stats[0]
     };
   }
@@ -84,11 +84,11 @@ class Sale {
   // Find sale by ID with items
   static async findById(id) {
     // Get sale info
-    const [saleRows] = await pool.query(
+    const { rows: saleRows } = await pool.query(
       `SELECT s.*, u.name as sold_by_name 
        FROM sales s
        LEFT JOIN users u ON s.sold_by = u.id
-       WHERE s.id = ?`,
+       WHERE s.id = $1`,
       [id]
     );
     
@@ -97,11 +97,11 @@ class Sale {
     const sale = saleRows[0];
     
     // Get sale items
-    const [items] = await pool.query(
+    const { rows: items } = await pool.query(
       `SELECT si.*, p.name as product_name, p.sku, p.unit
        FROM sale_items si
        JOIN products p ON si.product_id = p.id
-       WHERE si.sale_id = ?`,
+       WHERE si.sale_id = $1`,
       [id]
     );
     
@@ -119,11 +119,11 @@ class Sale {
     const day = String(date.getDate()).padStart(2, '0');
     
     // Get today's invoice count
-    const [countRows] = await pool.query(
-      'SELECT COUNT(*) as count FROM sales WHERE DATE(created_at) = CURDATE()'
+    const { rows: countRows } = await pool.query(
+      'SELECT COUNT(*) as count FROM sales WHERE DATE(created_at) = CURRENT_DATE'
     );
     
-    const count = countRows[0].count + 1;
+    const count = parseInt(countRows[0].count) + 1;
     const invoiceNumber = `INV-${year}${month}${day}-${String(count).padStart(4, '0')}`;
     
     return invoiceNumber;
@@ -131,22 +131,23 @@ class Sale {
 
   // Create new sale with transaction
   static async create(saleData, items) {
-    const connection = await pool.getConnection();
+    const client = await pool.connect();
     
     try {
-      await connection.beginTransaction();
+      await client.query('BEGIN');
       
       // Generate unique invoice number
       const invoiceNumber = await this.generateInvoiceNumber();
       
       // Create sale
-      const [saleResult] = await connection.query(
+      const { rows: saleResult } = await client.query(
         `INSERT INTO sales (
           invoice_number, customer_name, customer_email, customer_phone,
           total_amount, discount_amount, tax_amount, final_amount,
           amount_paid, change_amount,
           payment_method, payment_status, status, sold_by, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        RETURNING id`,
         [
           invoiceNumber,
           saleData.customer_name || null,
@@ -166,14 +167,14 @@ class Sale {
         ]
       );
       
-      const saleId = saleResult.insertId;
+      const saleId = saleResult[0].id;
       
       // Add sale items and update stock
       for (const item of items) {
         // Insert sale item
-        await connection.query(
+        await client.query(
           `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total_price)
-           VALUES (?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5)`,
           [
             saleId, 
             item.product_id, 
@@ -183,33 +184,33 @@ class Sale {
           ]
         );
         
-        // Get current stock before update
-        const [productRows] = await connection.query(
-          'SELECT current_stock FROM products WHERE id = ? FOR UPDATE',
+        // Get current stock before update with FOR UPDATE
+        const { rows: productRows } = await client.query(
+          'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
           [item.product_id]
         );
         
         if (productRows.length > 0) {
-          const previousStock = productRows[0].current_stock;
+          const previousStock = parseInt(productRows[0].current_stock);
           const newStock = previousStock - parseInt(item.quantity);
           
           // Update product stock
-          await connection.query(
-            'UPDATE products SET current_stock = current_stock - ? WHERE id = ?',
+          await client.query(
+            'UPDATE products SET current_stock = current_stock - $1 WHERE id = $2',
             [parseInt(item.quantity), item.product_id]
           );
           
           // Record stock movement
-          await connection.query(
+          await client.query(
             `INSERT INTO stock_movements (
               product_id, movement_type, quantity, previous_stock, new_stock,
               reference_type, reference_id, created_by, notes
-            ) VALUES (?, 'out', ?, ?, ?, 'sale', ?, ?, ?)`,
+            ) VALUES ($1, 'out', $2, $3, $4, 'sale', $5, $6, $7)`,
             [
               item.product_id,
               parseInt(item.quantity),
-              parseInt(previousStock),
-              parseInt(newStock),
+              previousStock,
+              newStock,
               saleId,
               saleData.sold_by,
               `Sale ${invoiceNumber} - ${item.quantity} units`
@@ -218,81 +219,83 @@ class Sale {
         }
       }
       
-      await connection.commit();
+      await client.query('COMMIT');
       
       // Return created sale with items
       return await this.findById(saleId);
       
     } catch (error) {
-      await connection.rollback();
+      await client.query('ROLLBACK');
       throw error;
     } finally {
-      connection.release();
+      client.release();
     }
   }
-static async updateStatus(id, updateData, userId) {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
+
+  static async updateStatus(id, updateData, userId) {
+    const client = await pool.connect();
     
-    // Update sale
-    await connection.query(
-      `UPDATE sales 
-       SET status = ?, payment_status = ?, amount_paid = ?, change_amount = ?, payment_method = ?
-       WHERE id = ?`,
-      [
-        updateData.status,
-        updateData.payment_status,
-        parseFloat(updateData.amount_paid),
-        parseFloat(updateData.change_amount || 0),
-        updateData.payment_method,
-        id
-      ]
-    );
-    
-    // Record the payment transaction if needed - try-catch in case table doesn't exist
     try {
-      await connection.query(
-        `INSERT INTO payment_transactions (
-          sale_id, amount, payment_method, processed_by, notes
-        ) VALUES (?, ?, ?, ?, ?)`,
+      await client.query('BEGIN');
+      
+      // Update sale
+      await client.query(
+        `UPDATE sales 
+         SET status = $1, payment_status = $2, amount_paid = $3, change_amount = $4, payment_method = $5
+         WHERE id = $6`,
         [
-          id,
+          updateData.status,
+          updateData.payment_status,
           parseFloat(updateData.amount_paid),
+          parseFloat(updateData.change_amount || 0),
           updateData.payment_method,
-          userId,
-          `Payment received to complete sale`
+          id
         ]
       );
+      
+      // Record the payment transaction if needed - try-catch in case table doesn't exist
+      try {
+        await client.query(
+          `INSERT INTO payment_transactions (
+            sale_id, amount, payment_method, processed_by, notes
+          ) VALUES ($1, $2, $3, $4, $5)`,
+          [
+            id,
+            parseFloat(updateData.amount_paid),
+            updateData.payment_method,
+            userId,
+            `Payment received to complete sale`
+          ]
+        );
+      } catch (error) {
+        // If payment_transactions table doesn't exist, just log and continue
+        console.warn('payment_transactions table might not exist:', error.message);
+        // Continue with the transaction since this is optional
+      }
+      
+      await client.query('COMMIT');
+      
+      // Return updated sale
+      return await this.findById(id);
+      
     } catch (error) {
-      // If payment_transactions table doesn't exist, just log and continue
-      console.warn('payment_transactions table might not exist:', error.message);
-      // Continue with the transaction since this is optional
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-    
-    await connection.commit();
-    
-    // Return updated sale
-    return await this.findById(id);
-    
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
   }
-}
+
   // Cancel sale and restore stock
   static async cancel(id, userId) {
-    const connection = await pool.getConnection();
+    const client = await pool.connect();
     
     try {
-      await connection.beginTransaction();
+      await client.query('BEGIN');
       
       // First, check if sale exists and get its status
-      const [saleRows] = await connection.query(
-        'SELECT * FROM sales WHERE id = ? FOR UPDATE',
+      const { rows: saleRows } = await client.query(
+        'SELECT * FROM sales WHERE id = $1 FOR UPDATE',
         [id]
       );
       
@@ -312,40 +315,40 @@ static async updateStatus(id, updateData, userId) {
       }
       
       // Get sale items
-      const [items] = await connection.query(
-        'SELECT * FROM sale_items WHERE sale_id = ?',
+      const { rows: items } = await client.query(
+        'SELECT * FROM sale_items WHERE sale_id = $1',
         [id]
       );
       
       // Restore stock for each item
       for (const item of items) {
         // Get current stock
-        const [productRows] = await connection.query(
-          'SELECT current_stock FROM products WHERE id = ? FOR UPDATE',
+        const { rows: productRows } = await client.query(
+          'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
           [item.product_id]
         );
         
         if (productRows.length > 0) {
-          const previousStock = productRows[0].current_stock;
+          const previousStock = parseInt(productRows[0].current_stock);
           const newStock = previousStock + parseInt(item.quantity);
           
           // Restore stock
-          await connection.query(
-            'UPDATE products SET current_stock = current_stock + ? WHERE id = ?',
+          await client.query(
+            'UPDATE products SET current_stock = current_stock + $1 WHERE id = $2',
             [parseInt(item.quantity), item.product_id]
           );
           
           // Record stock movement for return
-          await connection.query(
+          await client.query(
             `INSERT INTO stock_movements (
               product_id, movement_type, quantity, previous_stock, new_stock,
               reference_type, reference_id, created_by, notes
-            ) VALUES (?, 'in', ?, ?, ?, 'return', ?, ?, ?)`,
+            ) VALUES ($1, 'in', $2, $3, $4, 'return', $5, $6, $7)`,
             [
               item.product_id,
               parseInt(item.quantity),
-              parseInt(previousStock),
-              parseInt(newStock),
+              previousStock,
+              newStock,
               id,
               userId,
               'Sale cancellation - stock restored'
@@ -355,32 +358,32 @@ static async updateStatus(id, updateData, userId) {
       }
       
       // Update sale status
-      await connection.query(
-        'UPDATE sales SET status = "cancelled", payment_status = "refunded" WHERE id = ?',
-        [id]
+      await client.query(
+        'UPDATE sales SET status = $1, payment_status = $2 WHERE id = $3',
+        ['cancelled', 'refunded', id]
       );
       
-      await connection.commit();
+      await client.query('COMMIT');
       return true;
       
     } catch (error) {
-      await connection.rollback();
+      await client.query('ROLLBACK');
       throw error;
     } finally {
-      connection.release();
+      client.release();
     }
   }
 
   // Refund sale
   static async refund(id, userId, notes = '') {
-    const connection = await pool.getConnection();
+    const client = await pool.connect();
     
     try {
-      await connection.beginTransaction();
+      await client.query('BEGIN');
       
       // First, check if sale exists and get its status
-      const [saleRows] = await connection.query(
-        'SELECT * FROM sales WHERE id = ? FOR UPDATE',
+      const { rows: saleRows } = await client.query(
+        'SELECT * FROM sales WHERE id = $1 FOR UPDATE',
         [id]
       );
       
@@ -400,40 +403,40 @@ static async updateStatus(id, updateData, userId) {
       }
       
       // Get sale items
-      const [items] = await connection.query(
-        'SELECT * FROM sale_items WHERE sale_id = ?',
+      const { rows: items } = await client.query(
+        'SELECT * FROM sale_items WHERE sale_id = $1',
         [id]
       );
       
       // Restore stock for each item
       for (const item of items) {
         // Get current stock
-        const [productRows] = await connection.query(
-          'SELECT current_stock FROM products WHERE id = ? FOR UPDATE',
+        const { rows: productRows } = await client.query(
+          'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
           [item.product_id]
         );
         
         if (productRows.length > 0) {
-          const previousStock = productRows[0].current_stock;
+          const previousStock = parseInt(productRows[0].current_stock);
           const newStock = previousStock + parseInt(item.quantity);
           
           // Restore stock
-          await connection.query(
-            'UPDATE products SET current_stock = current_stock + ? WHERE id = ?',
+          await client.query(
+            'UPDATE products SET current_stock = current_stock + $1 WHERE id = $2',
             [parseInt(item.quantity), item.product_id]
           );
           
           // Record stock movement for return
-          await connection.query(
+          await client.query(
             `INSERT INTO stock_movements (
               product_id, movement_type, quantity, previous_stock, new_stock,
               reference_type, reference_id, created_by, notes
-            ) VALUES (?, 'in', ?, ?, ?, 'return', ?, ?, ?)`,
+            ) VALUES ($1, 'in', $2, $3, $4, 'return', $5, $6, $7)`,
             [
               item.product_id,
               parseInt(item.quantity),
-              parseInt(previousStock),
-              parseInt(newStock),
+              previousStock,
+              newStock,
               id,
               userId,
               notes || 'Sale refund'
@@ -442,23 +445,23 @@ static async updateStatus(id, updateData, userId) {
         }
       }
       
-      // Update sale status - FIXED: Use proper enum values
+      // Update sale status
       const existingNotes = sale.notes || '';
       const refundNote = `\nRefunded on ${new Date().toISOString()}: ${notes}`;
       
-      await connection.query(
-        'UPDATE sales SET status = "refunded", payment_status = "refunded", notes = CONCAT(?, ?) WHERE id = ?',
-        [existingNotes, refundNote, id]
+      await client.query(
+        'UPDATE sales SET status = $1, payment_status = $2, notes = CONCAT($3, $4) WHERE id = $5',
+        ['refunded', 'refunded', existingNotes, refundNote, id]
       );
       
-      await connection.commit();
+      await client.query('COMMIT');
       return true;
       
     } catch (error) {
-      await connection.rollback();
+      await client.query('ROLLBACK');
       throw error;
     } finally {
-      connection.release();
+      client.release();
     }
   }
 
@@ -469,19 +472,19 @@ static async updateStatus(id, updateData, userId) {
     
     switch(period) {
       case 'today':
-        dateFilter = 'AND DATE(s.created_at) = CURDATE()';
+        dateFilter = 'AND DATE(s.created_at) = CURRENT_DATE';
         break;
       case 'week':
-        dateFilter = 'AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+        dateFilter = 'AND s.created_at >= CURRENT_DATE - INTERVAL \'7 days\'';
         break;
       case 'month':
-        dateFilter = 'AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+        dateFilter = 'AND s.created_at >= CURRENT_DATE - INTERVAL \'30 days\'';
         break;
       default:
         dateFilter = '';
     }
     
-    const [stats] = await pool.query(`
+    const { rows: stats } = await pool.query(`
       SELECT 
         COUNT(*) as total_sales,
         COALESCE(SUM(s.final_amount), 0) as total_revenue,
@@ -498,7 +501,7 @@ static async updateStatus(id, updateData, userId) {
 
   // Get daily sales for chart
   static async getDailySales(days = 7) {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       `SELECT 
         DATE(created_at) as date,
         COUNT(*) as total_sales,
@@ -506,17 +509,16 @@ static async updateStatus(id, updateData, userId) {
         COALESCE(AVG(final_amount), 0) as average_sale
        FROM sales 
        WHERE status = 'completed'
-       AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       AND created_at >= CURRENT_DATE - INTERVAL '${days} days'
        GROUP BY DATE(created_at) 
-       ORDER BY date`,
-      [days]
+       ORDER BY date`
     );
     return rows;
   }
 
   // Get top selling products
   static async getTopProducts(limit = 5) {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       `SELECT 
         p.id,
         p.name,
@@ -527,9 +529,9 @@ static async updateStatus(id, updateData, userId) {
        JOIN products p ON si.product_id = p.id
        JOIN sales s ON si.sale_id = s.id
        WHERE s.status = 'completed'
-       GROUP BY p.id
+       GROUP BY p.id, p.name, p.sku
        ORDER BY total_sold DESC
-       LIMIT ?`,
+       LIMIT $1`,
       [limit]
     );
     return rows;
