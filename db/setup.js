@@ -1,4 +1,4 @@
-// db/setup.js
+// db/setup.js - COMPLETE VERSION
 const { pool } = require('../config/database');
 const bcrypt = require('bcryptjs');
 
@@ -9,8 +9,6 @@ async function setupDatabase() {
   
   try {
     await client.query('BEGIN');
-    
-    console.log('🗄️ Creating tables...');
     
     // 1. Users table
     await client.query(`
@@ -59,7 +57,7 @@ async function setupDatabase() {
     `);
     console.log('✓ suppliers table created');
     
-    // 4. Products table
+    // 4. Products table - MOST IMPORTANT!
     await client.query(`
       CREATE TABLE IF NOT EXISTS products (
         id SERIAL PRIMARY KEY,
@@ -132,13 +130,13 @@ async function setupDatabase() {
         notes TEXT,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        previous_stock INTEGER NOT NULL DEFAULT 0,
-        new_stock INTEGER NOT NULL DEFAULT 0
+        previous_stock INTEGER DEFAULT 0,
+        new_stock INTEGER DEFAULT 0
       )
     `);
     console.log('✓ stock_movements table created');
     
-    // 8. Purchase Orders table (optional)
+    // 8. Purchase Orders table
     await client.query(`
       CREATE TABLE IF NOT EXISTS purchase_orders (
         id SERIAL PRIMARY KEY,
@@ -155,9 +153,9 @@ async function setupDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('✓ purchase_orders table created (optional)');
+    console.log('✓ purchase_orders table created');
     
-    // 9. Purchase Order Items table (optional)
+    // 9. Purchase Order Items table
     await client.query(`
       CREATE TABLE IF NOT EXISTS purchase_order_items (
         id SERIAL PRIMARY KEY,
@@ -170,9 +168,9 @@ async function setupDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('✓ purchase_order_items table created (optional)');
+    console.log('✓ purchase_order_items table created');
     
-    // 10. Payment Transactions table (optional)
+    // 10. Payment Transactions table
     await client.query(`
       CREATE TABLE IF NOT EXISTS payment_transactions (
         id SERIAL PRIMARY KEY,
@@ -184,7 +182,7 @@ async function setupDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('✓ payment_transactions table created (optional)');
+    console.log('✓ payment_transactions table created');
     
     // Create indexes
     console.log('📊 Creating indexes...');
@@ -210,39 +208,41 @@ async function setupDatabase() {
       try {
         await client.query(indexSql);
       } catch (error) {
-        console.log(`Index already exists or error: ${error.message}`);
+        // Ignore index errors
       }
     }
     
-    // Create updated_at trigger function
-    await client.query(`
-      CREATE OR REPLACE FUNCTION update_updated_at_column()
-      RETURNS TRIGGER AS $$
-      BEGIN
-          NEW.updated_at = CURRENT_TIMESTAMP;
-          RETURN NEW;
-      END;
-      $$ language 'plpgsql'
-    `);
-    
-    // Create triggers
-    const triggers = [
-      `CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
-       FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-       
-      `CREATE TRIGGER update_products_updated_at BEFORE UPDATE ON products
-       FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
-       
-      `CREATE TRIGGER update_sales_updated_at BEFORE UPDATE ON sales
-       FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`
-    ];
-    
-    for (const triggerSql of triggers) {
-      try {
-        await client.query(triggerSql);
-      } catch (error) {
-        console.log(`Trigger already exists: ${error.message}`);
-      }
+    // Create triggers for updated_at
+    try {
+      await client.query(`
+        CREATE OR REPLACE FUNCTION update_updated_at_column()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = CURRENT_TIMESTAMP;
+            RETURN NEW;
+        END;
+        $$ language 'plpgsql'
+      `);
+      
+      await client.query(`
+        CREATE TRIGGER update_users_updated_at 
+        BEFORE UPDATE ON users
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+      `);
+      
+      await client.query(`
+        CREATE TRIGGER update_products_updated_at 
+        BEFORE UPDATE ON products
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+      `);
+      
+      await client.query(`
+        CREATE TRIGGER update_sales_updated_at 
+        BEFORE UPDATE ON sales
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+      `);
+    } catch (error) {
+      console.log('Triggers already exist');
     }
     
     // Create admin user
@@ -251,12 +251,13 @@ async function setupDatabase() {
     const hashedPassword = await bcrypt.hash('Admin@123', salt);
     
     try {
-      const adminCheck = await client.query(
+      // Check if admin already exists
+      const checkResult = await client.query(
         'SELECT id FROM users WHERE email = $1',
         ['admin@inventory.com']
       );
       
-      if (adminCheck.rows.length === 0) {
+      if (checkResult.rows.length === 0) {
         await client.query(`
           INSERT INTO users (name, email, password, role, phone, status)
           VALUES ($1, $2, $3, $4, $5, $6)
@@ -273,7 +274,7 @@ async function setupDatabase() {
         console.log('✅ Admin user already exists');
       }
     } catch (error) {
-      console.log('⚠ Admin user creation skipped:', error.message);
+      console.log('⚠ Admin user error:', error.message);
     }
     
     await client.query('COMMIT');
