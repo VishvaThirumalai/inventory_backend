@@ -1,19 +1,38 @@
-// server.js - Updated for PostgreSQL
+// server.js - Complete with fixed CORS
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
 
-// CORS configuration
+// List of allowed origins
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://inventory-ui-pv33.onrender.com',
+  'https://inventory-api-m7d5.onrender.com'
+];
+
+// CORS middleware
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? process.env.FRONTEND_URL || 'http://localhost:3000'
-    : 'https://inventory-ui-pv33.onrender.com',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log('Blocked by CORS:', origin);
+      callback(new Error('Not allowed by CORS'), false);
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
+
+// Handle preflight requests for all routes
+app.options('*', cors());
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));
@@ -88,17 +107,16 @@ app.post('/api/setup', async (req, res) => {
   }
   
   try {
-    const { setupDatabase } = require('./database/setup');
+    const { setupDatabase } = require('./db/setup');
     await setupDatabase();
     res.json({ success: true, message: 'Database setup completed' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
-// server.js - Add this after middleware section
-const { setupDatabase } = require('./db/setup');
 
 // Auto-setup middleware (runs once on first request)
+const { setupDatabase } = require('./db/setup');
 let dbSetupComplete = false;
 app.use(async (req, res, next) => {
   if (!dbSetupComplete && req.method === 'GET' && req.path === '/health') {
@@ -112,6 +130,7 @@ app.use(async (req, res, next) => {
   }
   next();
 });
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -140,4 +159,5 @@ app.listen(PORT, () => {
   console.log(`📊 Port: ${PORT}`);
   console.log(`💾 Database: PostgreSQL`);
   console.log(`🔗 http://localhost:${PORT}`);
+  console.log(`🌍 Allowed origins:`, allowedOrigins);
 });
