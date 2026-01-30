@@ -30,7 +30,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
-
+const { setupDatabase } = require('./db/setup');
 // Handle preflight requests for all routes
 app.options('*', cors());
 
@@ -81,7 +81,53 @@ app.get('/health', async (req, res) => {
     });
   }
 });
+app.get('/api/setup-db', async (req, res) => {
+  try {
+    console.log('🔄 Manually triggering database setup...');
+    await setupDatabase();
+    res.json({ 
+      success: true, 
+      message: 'Database setup completed successfully!',
+      admin: {
+        email: 'admin@inventory.com',
+        password: 'Admin@123'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Database setup failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      error: error.code,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
 
+// Also add a simple test endpoint
+app.get('/api/test-tables', async (req, res) => {
+  try {
+    const { pool } = require('./config/database');
+    const result = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public'
+      ORDER BY table_name
+    `);
+    
+    res.json({
+      success: true,
+      tables: result.rows.map(row => row.table_name),
+      count: result.rows.length
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      error: error.code 
+    });
+  }
+});
 // Root route
 app.get('/', (req, res) => {
   res.json({
@@ -151,57 +197,7 @@ app.use((err, req, res, next) => {
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 });
-// Add this route RIGHT AFTER the CORS middleware but BEFORE other routes
-const { setupDatabase } = require('./db/setup');
 
-// Manual setup endpoint
-app.get('/api/setup-db', async (req, res) => {
-  try {
-    console.log('🔄 Manually triggering database setup...');
-    await setupDatabase();
-    res.json({ 
-      success: true, 
-      message: 'Database setup completed successfully!',
-      admin: {
-        email: 'admin@inventory.com',
-        password: 'Admin@123'
-      }
-    });
-  } catch (error) {
-    console.error('❌ Database setup failed:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      error: error.code,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-
-// Also add a simple test endpoint
-app.get('/api/test-tables', async (req, res) => {
-  try {
-    const { pool } = require('./config/database');
-    const result = await pool.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public'
-      ORDER BY table_name
-    `);
-    
-    res.json({
-      success: true,
-      tables: result.rows.map(row => row.table_name),
-      count: result.rows.length
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      error: error.code 
-    });
-  }
-});
 // Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
