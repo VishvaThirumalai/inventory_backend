@@ -7,21 +7,24 @@ exports.getAll = async (req, res) => {
   try {
     console.log('🔍 [Categories] Getting all categories with counts...');
     
-    const { withCounts = 'true' } = req.query;
+    const { page = 1, limit = 100, search = '' } = req.query;
     
-    let categories;
-    if (withCounts === 'true') {
-      categories = await Category.getAllWithProductCounts();
-    } else {
-      categories = await Category.getAll();
-    }
+    const result = await Category.getAll({ 
+      page: parseInt(page), 
+      limit: parseInt(limit), 
+      search 
+    });
     
-    console.log(`✅ [Categories] Found ${categories.length} categories`);
+    console.log(`✅ [Categories] Found ${result.categories.length} categories`);
     
     res.json({ 
       success: true, 
-      data: categories,
-      count: categories.length 
+      data: result.categories,
+      count: result.categories.length,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.totalPages
     });
   } catch (error) {
     console.error('❌ [Categories] Error in getAll:', error);
